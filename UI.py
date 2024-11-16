@@ -214,21 +214,20 @@ class ChatUI:
         logging.debug(f"歷史記錄選項: {state}")
 
     def _collect_chat_history(self) -> str:
-        """收集聊天歷史，只保留實際對話內容"""
+        """收集聊天歷史，特別處理代碼塊"""
         history = []
         content = self.chat_display.get("1.0", tk.END)
     
-        # 使用正則表達式提取有效的對話內容
         import re
     
-        # 匹配格式：[時間] 角色:\n內容
+        # 匹配訊息的基本模式
         message_pattern = r'\[([\d:]+)\] (User|Claude|System):\n(.*?)(?=\n\[|$)'
         matches = re.finditer(message_pattern, content, re.DOTALL)
     
         for match in matches:
             timestamp, role, message = match.groups()
         
-            # 過濾系統消息和處理相關的信息
+            # 過濾系統消息
             if role == 'System':
                 if 'Processing' in message or 'Query completed' in message:
                     continue
@@ -240,14 +239,65 @@ class ChatUI:
             if not message:
                 continue
             
-            # 只保留 User 和 Claude 的實際對話內容
             if role in ['User', 'Claude']:
-                formatted_message = f"[{timestamp}] {role}:\n{message}\n\n"
+                # 處理消息中的代碼塊
+                processed_message = self._process_code_blocks(message)
+                formatted_message = f"[{timestamp}] {role}:\n{processed_message}\n\n"
                 history.append(formatted_message)
     
         if history:
             return "Previous conversation:\n" + "".join(history)
         return ""
+
+    def _process_code_blocks(self, message: str) -> str:
+        """處理消息中的代碼塊"""
+        import re
+    
+        # 檢測是否包含代碼塊
+        code_block_pattern = r'```(?:\w+)?\n(.*?)```'
+    
+        def replace_code_block(match):
+            """替換代碼塊為特殊格式"""
+            code_content = match.group(1).strip()
+            # 使用<CODE>標記包裝代碼，避免影響JSON解析
+            return f"<CODE>\n{code_content}\n</CODE>"
+    
+        # 替換所有代碼塊
+        processed_message = re.sub(code_block_pattern, replace_code_block, message, flags=re.DOTALL)
+        return processed_message
+
+    def _build_framework_prompt(self, query: str) -> str:
+        """構建框架定義prompt，添加代碼處理說明"""
+        base_prompt = f"""Please analyze the following query and design a thinking framework.
+The framework MUST include analysis phases followed by an execution phase.
+Note: Code blocks in the conversation history are wrapped in <CODE> tags.
+
+Query: {query}
+
+Required format:
+<framework>
+{{
+    "query_type": "code_generation|creative_writing|analysis|other",
+    "final_output_type": "description of what needs to be produced",
+    "phases": [
+        {{
+            "name": "phase_name",
+            "type": "analysis|execution",
+            "requirements": {{
+                "input": "what is needed as input",
+                "objective": "what this phase should achieve",
+                "success_criteria": "what determines success"
+            }}
+        }}
+    ],
+    "success_criteria": {{
+        "overall_objective": "main goal to achieve",
+        "quality_metrics": ["list of quality metrics"]
+    }}
+}}
+</framework>
+"""
+        return base_prompt
 
     def _on_key(self, event):
         """處理按鍵輸入"""
@@ -340,9 +390,13 @@ class ChatUI:
                 # 如果需要包含歷史記錄
                 if self.include_history.get():
                     history = self._collect_chat_history()
-                    if history:  # 只有在有歷史記錄時才添加
-                        # 將歷史記錄添加到消息中
-                        full_message = f"{history}\nNew query: {message}"
+                    if history:
+                        # 在prompt中說明代碼塊的處理方式
+                        full_message = (
+                            f"{history}\n"
+                            "Note: Code blocks in the above history are wrapped in <CODE> tags.\n\n"
+                            f"New query: {message}"
+                        )
                         logging.debug(f"Complete message with history:\n{full_message}")
                     else:
                         full_message = message
