@@ -1,0 +1,4 @@
+requests
+python-dotenv
+json5
+logging
