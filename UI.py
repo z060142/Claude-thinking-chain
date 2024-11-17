@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 import os
+from typing import List, Dict, Optional, Union
 from typing import Optional
 from datetime import datetime
 from config import load_config
@@ -30,6 +31,150 @@ logging.basicConfig(
 )
 
 class ChatUI:
+    def _setup_font_system(self):
+        """設置字型系統"""
+        import platform
+        
+        # 根據不同平台定義字型優先序
+        self.font_families = {
+            'windows': [
+                'Microsoft YaHei UI',  # 微軟雅黑（中文）
+                'Segoe UI',           # Windows 默認UI字型
+                'Arial Unicode MS',   # 通用Unicode字型
+                'Arial',              # 基礎英文字型
+                'TkDefaultFont'       # Tk默認字型
+            ],
+            'darwin': [               # macOS
+                'PingFang TC',        # 蘋方（繁體中文）
+                'PingFang SC',        # 蘋方（簡體中文）
+                'Helvetica Neue',     # macOS 默認UI字型
+                'Arial Unicode MS',
+                'Arial',
+                'TkDefaultFont'
+            ],
+            'linux': [
+                'Noto Sans TC',       # Google Noto字型（繁體中文）
+                'Noto Sans SC',       # Google Noto字型（簡體中文）
+                'Noto Sans',          # Google Noto字型（基礎）
+                'DejaVu Sans',        # Linux常見字型
+                'FreeSans',
+                'TkDefaultFont'
+            ]
+        }
+        
+        # 代碼字型優先序
+        self.code_font_families = {
+            'windows': [
+                'Consolas',
+                'Courier New',
+                'Courier'
+            ],
+            'darwin': [
+                'Menlo',
+                'Monaco',
+                'Courier New',
+                'Courier'
+            ],
+            'linux': [
+                'DejaVu Sans Mono',
+                'Liberation Mono',
+                'Courier New',
+                'Courier'
+            ]
+        }
+        
+        # 獲取當前操作系統
+        system = platform.system().lower()
+        if system not in self.font_families:
+            system = 'windows'  # 默認使用windows字型列表
+            
+        # 檢查並選擇可用的字型
+        self.selected_font = self._get_available_font(self.font_families[system])
+        self.selected_code_font = self._get_available_font(self.code_font_families[system])
+        
+        logging.info(f"Selected font: {self.selected_font}")
+        logging.info(f"Selected code font: {self.selected_code_font}")
+
+    def _get_available_font(self, font_list: List[str]) -> str:
+        """檢查並返回第一個可用的字型"""
+        root = self.root
+        
+        for font_name in font_list:
+            try:
+                # 測試字型
+                test_font = tkfont.Font(family=font_name, size=10, root=root)
+                # 如果能創建字型對象，說明字型可用
+                test_font.actual()  # 這會拋出異常如果字型不可用
+                return font_name
+            except Exception as e:
+                logging.debug(f"Font {font_name} not available: {str(e)}")
+                continue
+        
+        # 如果所有字型都不可用，返回系統默認字型
+        return "TkDefaultFont"
+
+    def _setup_styles(self):
+        """設定文字樣式"""
+        logging.debug("Setting up styles")
+        
+        # 初始化字型系統
+        self._setup_font_system()
+        
+        # 使用選定的字型
+        self.chat_font = tkfont.Font(family=self.selected_font, size=10)
+        self.code_font = tkfont.Font(family=self.selected_code_font, size=10)
+        
+        # 設定標籤樣式
+        style = ttk.Style()
+        style.configure(
+            "Phase.TLabel", 
+            padding=5, 
+            font=(self.selected_font, 10, 'bold')
+        )
+        style.configure(
+            "Status.TLabel", 
+            padding=5,
+            font=(self.selected_font, 10)
+        )
+        
+        # 設定文字標籤
+        self.chat_display_tags = {
+            "sender_user": {
+                "font": (self.selected_font, 10, 'bold'),
+                "foreground": "#2E7D32",
+                "spacing1": 10,
+                "spacing3": 5
+            },
+            "sender_claude": {
+                "font": (self.selected_font, 10, 'bold'),
+                "foreground": "#1976D2",
+                "spacing1": 10,
+                "spacing3": 5
+            },
+            "sender_system": {
+                "font": (self.selected_font, 10, 'bold'),
+                "foreground": "#757575",
+                "spacing1": 10,
+                "spacing3": 5
+            },
+            "message": {
+                "font": (self.selected_font, 10),
+                "spacing1": 2,
+                "spacing3": 10
+            },
+            "code": {
+                "font": (self.selected_code_font, 10),
+                "background": "#F5F5F5",
+                "spacing1": 5,
+                "spacing3": 5
+            },
+            "timestamp": {
+                "font": (self.selected_font, 8),
+                "foreground": "#9E9E9E"
+            }
+        }
+        logging.debug("Styles setup completed")
+    
     def __init__(self, root):
         logging.info("Initializing ChatUI")
         self.root = root
@@ -53,7 +198,7 @@ class ChatUI:
         self.root.geometry("1200x800")
         
         # UI初始化
-        self._setup_styles()
+        self._setup_styles()  # 需要在其他UI初始化之前設置樣式
         self.main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         self.main_paned.pack(fill=tk.BOTH, expand=True)
         
@@ -70,63 +215,13 @@ class ChatUI:
         
         logging.info("ChatUI initialization completed")
 
-    def _setup_styles(self):
-        """設定文字樣式"""
-        logging.debug("Setting up styles")
-        # 使用更通用的字體
-        self.chat_font = tkfont.Font(family="Noto_Sans_CJK_TC_Regular", size=10)
-        self.code_font = tkfont.Font(family="Noto_Serif_CJK_TC_Regular", size=10)
-    
-        # 設定標籤樣式
-        style = ttk.Style()
-        style.configure("Phase.TLabel", padding=5, font=('Noto_Sans_CJK_TC_Regular', 10, 'bold'))
-        style.configure("Status.TLabel", padding=5)
-    
-        # 設定文字標籤和顏色
-        self.chat_display_tags = {
-            "sender_user": {
-                "font": ('Noto_Sans_CJK_TC_Regular', 10, 'bold'), 
-                "foreground": "#2E7D32",  # 深綠色
-                "spacing1": 10,  # 上方間距
-                "spacing3": 5   # 下方間距
-            },
-            "sender_claude": {
-                "font": ('Noto_Sans_CJK_TC_Regular', 10, 'bold'), 
-                "foreground": "#1976D2",  # 深藍色
-                "spacing1": 10,
-                "spacing3": 5
-            },
-            "sender_system": {
-                "font": ('Noto_Sans_CJK_TC_Regular', 10, 'bold'), 
-                "foreground": "#757575",  # 灰色
-                "spacing1": 10,
-                "spacing3": 5
-            },
-            "message": {
-                "font": ('Noto_Sans_CJK_TC_Regular', 10),
-                "spacing1": 2,
-                "spacing3": 10
-            },
-            "code": {
-                "font": ('Noto_Serif_CJK_TC_Regular', 10),
-                "background": "#F5F5F5",  # 淺灰色背景
-                "spacing1": 5,
-                "spacing3": 5
-            },
-            "timestamp": {
-                "font": ('Noto_Sans_CJK_TC_Regular', 8),
-                "foreground": "#9E9E9E"  # 淺灰色
-            }
-        }
-        logging.debug("Styles setup completed")
-
     def _init_chat_area(self):
         """初始化聊天區域"""
         logging.debug("Initializing chat area")
         
         # 聊天區域框架
         chat_container = ttk.Frame(self.chat_frame)
-        chat_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        chat_container.pack(fill=tk.BOTH, expand=False, padx=10, pady=5)
         
         # 聊天顯示區域
         self.chat_display = scrolledtext.ScrolledText(
@@ -134,15 +229,15 @@ class ChatUI:
             wrap=tk.WORD,
             font=self.chat_font
         )
-        self.chat_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.chat_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=(28, 5))
         
         # 設定文字標籤
         for tag, config in self.chat_display_tags.items():
             self.chat_display.tag_configure(tag, **config)
         
-            # 輸入框架
+        # 輸入框架
         input_frame = ttk.Frame(self.chat_frame)
-        input_frame.pack(fill=tk.X, padx=5, pady=5)
+        input_frame.pack(fill=tk.X, padx=(5), pady=5)
     
         # 添加控制框架（包含複選框和發送按鈕）
         control_frame = ttk.Frame(input_frame)
@@ -150,18 +245,18 @@ class ChatUI:
         
         # 右鍵菜單
         self.context_menu = tk.Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="複製", command=self._copy_text)
+        self.context_menu.add_command(label="Copy", command=self._copy_text)
         
         self.chat_display.bind("<Button-3>", self._show_context_menu)
         
         # 輸入區域框架
         input_container = ttk.Frame(self.chat_frame)
-        input_container.pack(fill=tk.X, padx=10, pady=5)
+        input_container.pack(fill=tk.X, padx=510, pady=5)
         
         # 輸入區域
         self.input_area = scrolledtext.ScrolledText(
             control_frame,
-            height=4,
+            height=5,
             wrap=tk.WORD,
             font=self.chat_font
         )
@@ -179,14 +274,14 @@ class ChatUI:
             variable=self.include_history,
             command=self._on_history_toggle
         )
-        self.history_checkbox.pack(side=tk.TOP, padx=5, pady=(0, 5))    
+        self.history_checkbox.pack(side=tk.TOP, padx=5, pady=(10, 5))    
     
         # 添加滾動條
-        input_scrollbar = ttk.Scrollbar(input_container, command=self.input_area.yview)
-        self.input_area.configure(yscrollcommand=input_scrollbar.set)
+        #input_scrollbar = ttk.Scrollbar(input_container, command=self.input_area.yview)
+        #self.input_area.configure(yscrollcommand=input_scrollbar.set)
     
-        self.input_area.pack(fill=tk.X, expand=True, side=tk.LEFT, padx=(0, 5))
-        input_scrollbar.pack(side=tk.LEFT, fill=tk.Y)
+        #self.input_area.pack(fill=tk.X, expand=True, side=tk.LEFT, padx=(0, 5))
+        #input_scrollbar.pack(side=tk.LEFT, fill=tk.Y)
     
         # 移除所有默認的按鍵綁定
         for key in self.input_area.bind():
@@ -355,7 +450,7 @@ Required format:
         title_label = ttk.Label(
             self.thinking_frame,
             text="Thinking Chain Progress",
-            font=('Noto_Sans_CJK_TC_Regular', 12, 'bold')
+            font=('Arial', 12, 'bold')
         )
         title_label.pack(fill=tk.X, padx=5, pady=5)
         
@@ -368,8 +463,8 @@ Required format:
         self.thinking_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # 設定思考鏈文字標籤
-        self.thinking_display.tag_configure("phase", font=('Noto_Sans_CJK_TC_Regular', 10, 'bold'))
-        self.thinking_display.tag_configure("status", font=('Noto_Sans_CJK_TC_Regular', 10, 'italic'))
+        self.thinking_display.tag_configure("phase", font=('Arial', 10, 'bold'))
+        self.thinking_display.tag_configure("status", font=('Arial', 10, 'italic'))
         self.thinking_display.tag_configure("content", font=('Courier', 10))
         logging.debug("Thinking area initialization completed")
 
